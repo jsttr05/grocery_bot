@@ -1,0 +1,32 @@
+Traceback (most recent call last):
+  File "<frozen runpy>", line 198, in _run_module_as_main
+  File "<frozen runpy>", line 88, in _run_code
+  File "C:\Users\olive\OneDrive\Skrivebord\Skole\NMai\grocery_bot\src\bot.py", line 39, in <module>
+    main()
+  File "C:\Users\olive\OneDrive\Skrivebord\Skole\NMai\grocery_bot\src\bot.py", line 35, in main
+    asyncio.run(play(args.url, viz_fn, deliver_action=deliver_action))
+  File "C:\Users\olive\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py", line 195, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "C:\Users\olive\AppData\Local\Programs\Python\Python312\Lib\asyncio\runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\olive\AppData\Local\Programs\Python\Python312\Lib\asyncio\base_events.py", line 691, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "C:\Users\olive\OneDrive\Skrivebord\Skole\NMai\grocery_bot\src\connection\websocket.py", line 31, in play
+    async with websockets.connect(ws_url) as ws:
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\olive\AppData\Local\Programs\Python\Python312\Lib\site-packages\websockets\asyncio\client.py", line 590, in __aenter__
+    return await self
+           ^^^^^^^^^^
+  File "C:\Users\olive\AppData\Local\Programs\Python\Python312\Lib\site-packages\websockets\asyncio\client.py", line 546, in __await_impl__
+    await self.connection.handshake(
+  File "C:\Users\olive\AppData\Local\Programs\Python\Python312\Lib\site-packages\websockets\asyncio\client.py", line 115, in handshake
+    raise self.protocol.handshake_exc
+  File "C:\Users\olive\AppData\Local\Programs\Python\Python312\Lib\site-packages\websockets\client.py", line 327, in parse
+    self.process_response(response)
+  File "C:\Users\olive\AppData\Local\Programs\Python\Python312\Lib\site-packages\websockets\client.py", line 144, in process_response
+    raise InvalidStatus(response)
+websockets.exceptions.InvalidStatus: server rejected WebSocket connection: HTTP 403
+Starting bot with strategy: nightmare

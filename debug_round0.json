@@ -1,0 +1,263 @@
+{
+  "type": "game_state",
+  "action_status": "ok",
+  "round": 0,
+  "max_rounds": 500,
+  "bots": [
+    {
+      "id": 0,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 1,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 2,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 3,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 4,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 5,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 6,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 7,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 8,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 9,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 10,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 11,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 12,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 13,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 14,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 15,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 16,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 17,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 18,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    },
+    {
+      "id": 19,
+      "position": [
+        28,
+        16
+      ],
+      "inventory": []
+    }
+  ],
+  "orders": [
+    {
+      "id": "order_0",
+      "items_required": [
+        "juice",
+        "cereal",
+        "bananas",
+        "eggs",
+        "carrots",
+        "juice",
+        "eggs"
+      ],
+      "items_delivered": [],
+      "complete": false,
+      "status": "active"
+    },
+    {
+      "id": "order_1",
+      "items_required": [
+        "milk",
+        "carrots",
+        "peppers",
+        "milk"
+      ],
+      "items_delivered": [],
+      "complete": false,
+      "status": "preview"
+    }
+  ],
+  "drop_off": [
+    1,
+    16
+  ],
+  "score": 0,
+  "active_order_index": 0,
+  "total_orders": 500,
+  "drop_off_zones": [
+    [
+      1,
+      16
+    ],
+    [
+      15,
+      16
+    ],
+    [
+      27,
+      16
+    ]
+  ],
+  "grid_size": "30x18",
+  "walls_count": 176,
+  "items_count": 144,
+  "items_sample": [
+    {
+      "id": "item_0",
+      "type": "cheese",
+      "position": [
+        3,
+        2
+      ]
+    },
+    {
+      "id": "item_1",
+      "type": "yogurt",
+      "position": [
+        5,
+        2
+      ]
+    },
+    {
+      "id": "item_2",
+      "type": "oats",
+      "position": [
+        3,
+        3
+      ]
+    },
+    {
+      "id": "item_3",
+      "type": "cereal",
+      "position": [
+        5,
+        3
+      ]
+    },
+    {
+      "id": "item_4",
+      "type": "sugar",
+      "position": [
+        3,
+        4
+      ]
+    }
+  ]
+}
