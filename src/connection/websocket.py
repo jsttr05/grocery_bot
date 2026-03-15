@@ -140,10 +140,16 @@ async def play(
             # Drop-off zones (needed for both assignment and delivery balancing)
             zones = state.drop_off_zones or [state.drop_off]
 
+            # Bots holding preview items are "reserved" — excluded from active collection
+            # so they don't accidentally mix in active items and discard their preview items.
+            preview = state.get_preview_order()
+            preview_needed = get_needed_items(preview) if preview else []
+
             # Global assignment — pass base walls only (items handled internally)
             collecting_bots = [
                 b for b in state.bots
                 if not any(t in order_needed for t in b["inventory"])
+                and not any(t in preview_needed for t in b["inventory"])
                 and len(b["inventory"]) < 3
             ]
             assignments = global_assign(

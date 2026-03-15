@@ -183,12 +183,12 @@ def decision_impl(
         if inventory and has_useful:
             return deliver_toward(bot["id"], pos, drop_off, walls, width, height, other_bots)
 
-    # Preview pre-fetch: keep idle bots busy with the upcoming order.
-    # Don't subtract all_inv_flat — allows redundant collection so more bots stay active.
-    # ctx.preview_covered (within-round claims) still limits to needed count per type.
+    # Preview pre-fetch: keep idle bots busy with the upcoming order
     if preview and len(inventory) < 3:
+        # Use precomputed flat inventory list if available
+        all_inv_flat = ctx.all_inv_flat if ctx.all_inv_flat else [t for b in state.bots for t in b["inventory"]]
         preview_remaining = list(get_needed_items(preview))
-        for t in ctx.preview_covered:
+        for t in all_inv_flat + ctx.preview_covered:
             if t in preview_remaining:
                 preview_remaining.remove(t)
 
@@ -196,12 +196,9 @@ def decision_impl(
         best_dist = float("inf")
         for item in state.items:
             if item["type"] in preview_remaining and item["id"] not in ctx.claimed:
-                adjs = adjacent_walkable(item["position"], walls, width, height, wall_set=wall_set)
-                d = min(
-                    (abs(a[0] - x) + abs(a[1] - y) for a in adjs), default=float("inf")
-                )
-                if d < best_dist:
-                    best_dist = d
+                dist = abs(item["position"][0] - x) + abs(item["position"][1] - y)
+                if dist < best_dist:
+                    best_dist = dist
                     best_item = item
 
         if best_item:
@@ -214,5 +211,14 @@ def decision_impl(
             if adjs:
                 target = min(adjs, key=lambda a: abs(a[0] - x) + abs(a[1] - y))
                 return next_action_toward(bot["id"], pos, target, walls, width, height, wall_set=wall_set)
+
+    # Homing: bots holding preview items (no active-order items) pre-position near their
+    # assigned drop-off zone so they can deliver in 1-2 rounds when the order activates.
+    # Uses bot-ID-based zone assignment to spread bots across all 3 zones evenly.
+    if not has_useful and inventory:
+        zones = state.drop_off_zones or [state.drop_off]
+        home_zone = zones[bot["id"] % len(zones)]
+        if [x, y] != home_zone:
+            return next_action_toward(bot["id"], pos, home_zone, walls, width, height, wall_set=wall_set)
 
     return {"bot": bot["id"], "action": "wait"}
