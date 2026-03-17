@@ -3,31 +3,26 @@ import json
 import websockets
 import heapq
 import random
-from collections import defaultdict, Counter
+from collections import Counter
 
-WS_URL = "wss://game.ainm.no/ws?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiI0ZDNkOGIyNC1iMGViLTQwMTAtOGM1MS05OGM1YzA4MzQ5NTgiLCJ0ZWFtX2lkIjoiMmMxMGRjOTEtNTU0NC00MWMzLTkxNDctMDk1NjE2MmE0MDdkIiwibWFwX2lkIjoiMTIwYzUxZGEtYzc2NS00YmFiLThiNzktYmJhOTQ1YTU5ZTdjIiwibWFwX3NlZWQiOjcwMDUsImRpZmZpY3VsdHkiOiJuaWdodG1hcmUiLCJleHAiOjE3NzM1MjgzODd9.rT8Et-orReV6iLwu3h68_zTLE0o1AjWZTBjtJsGSTsM"
+WS_URL = "wss://game.ainm.no/ws?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJkMmU0YTY4MS1iNTQzLTQ5NzUtOTU5MS03Nzc1NDI1YjgxYjMiLCJ0ZWFtX2lkIjoiMmMxMGRjOTEtNTU0NC00MWMzLTkxNDctMDk1NjE2MmE0MDdkIiwibWFwX2lkIjoiYzdjN2Y1NjQtMjQ5Ni00YWIxLTkxNzktNzUzMjk3OWFkY2I0IiwibWFwX3NlZWQiOjcwMDQsImRpZmZpY3VsdHkiOiJleHBlcnQiLCJleHAiOjE3NzM1MzMzMDJ9.mbBVkcDAqv3IInznI1YCWCeLxY4TMKIUkDtgEFbtkz4"
+
 
 # ---------------------------------------------------------------------------
 # A* Pathfinding
 # ---------------------------------------------------------------------------
 
 def astar(start, goal, walls, width, height):
-    """
-    Standard A*. Goal cell always excluded from blocked set — critical because
-    drop-off zones are wall tiles on this map.
-    Returns list of (x,y) steps NOT including start.
-    """
     goal_t  = tuple(goal)
     start_t = tuple(start)
     if start_t == goal_t:
         return []
-
+    # Goal is always passable (drop-off zones may be wall tiles on some maps)
     blocked = frozenset(tuple(w) for w in walls if tuple(w) != goal_t)
     open_set = []
     heapq.heappush(open_set, (0, start_t))
     came_from = {}
     g_score = {start_t: 0}
-
     while open_set:
         _, cur = heapq.heappop(open_set)
         if cur == goal_t:
@@ -67,12 +62,12 @@ def step_to_action(pos, nxt):
 
 
 # ---------------------------------------------------------------------------
-# Path cache  (per-bot, keyed by target)
+# Path cache — per-bot, keyed by target
 # ---------------------------------------------------------------------------
 
 class PathCache:
     def __init__(self):
-        self._cache = {}  # bot_id -> {"target": (x,y), "path": [(x,y),...]}
+        self._cache = {}
 
     def move_toward(self, bot_id, pos, target, walls, width, height):
         pos_t = (pos[0], pos[1])
@@ -80,11 +75,9 @@ class PathCache:
         if pos_t == tgt_t:
             self._cache.pop(bot_id, None)
             return None
-
         entry = self._cache.get(bot_id)
         if entry and entry["target"] == tgt_t and entry["path"]:
             path = entry["path"]
-            # Advance along cached path to current position
             if pos_t in path:
                 idx = path.index(pos_t)
                 path = path[idx + 1:]
@@ -92,7 +85,6 @@ class PathCache:
             wall_set = frozenset(tuple(w) for w in walls if tuple(w) != tgt_t)
             if path and path[0] not in wall_set and mdist(path[0], pos_t) == 1:
                 return step_to_action(pos_t, path[0])
-
         path = astar(pos, target, walls, width, height)
         if path:
             self._cache[bot_id] = {"target": tgt_t, "path": list(path)}
@@ -112,7 +104,6 @@ class PathCache:
 # ---------------------------------------------------------------------------
 
 def get_needed(order):
-    """Item types still undelivered for this order."""
     needed = list(order["items_required"])
     for d in order["items_delivered"]:
         if d in needed:
@@ -130,101 +121,73 @@ def nearest_zone(pos, zones):
     return min(zones, key=lambda z: mdist(pos, z))
 
 
-def floor_adj(pos, wall_set, width, height):
-    """Walkable tiles adjacent to pos."""
+def floor_adj(pos, blocked_set, width, height):
+    """Walkable tiles adjacent to pos (not in blocked_set)."""
     x, y = pos
     result = []
     for dx, dy in [(0, -1), (0, 1), (-1, 0), (1, 0)]:
         nx, ny = x + dx, y + dy
-        if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in wall_set:
+        if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in blocked_set:
             result.append((nx, ny))
     return result
 
 
-def nav_target(item, wall_set, width, height, from_pos=None):
+def nav_target(item, all_walls_set, width, height, from_pos=None):
     """
-    Position a bot should walk TO in order to be adjacent to this item.
-    If item is on a wall (shelf), return the nearest adjacent floor tile.
-    If item is already on the floor, return its own position.
-    Returns None if no reachable adjacent tile exists.
+    Returns the floor tile a bot should navigate TO in order to pick up this item.
+    Items are impassable — always returns an ADJACENT floor tile, never the item position.
+    all_walls_set must include item positions so adjacency is computed correctly.
     """
     ip = (item["position"][0], item["position"][1])
-    if ip in wall_set:
-        adjs = floor_adj(ip, wall_set, width, height)
-        if not adjs:
-            return None
-        if from_pos is not None:
-            return min(adjs, key=lambda a: mdist(from_pos, a))
-        return adjs[0]
-    return ip
+    adjs = floor_adj(ip, all_walls_set, width, height)
+    if not adjs:
+        return None
+    if from_pos is not None:
+        return min(adjs, key=lambda a: mdist(from_pos, a))
+    return adjs[0]
 
 
 # ---------------------------------------------------------------------------
 # Persistent per-game state
 # ---------------------------------------------------------------------------
 
-_path_cache      = None   # PathCache instance, reset per game connection
-_bot_target      = {}     # bot_id -> item_id  (current collection target)
+_path_cache      = None
+_bot_target      = {}   # bot_id -> item_id
 _prev_pos        = {}
 _prev_prev_pos   = {}
-_stuck_count     = {}  # bot_id -> consecutive rounds stuck
+_stuck_count     = {}
 _prev_item_ids   = set()
-_active_req_key  = None   # tuple(sorted(items_required)) — reset assignments on NEW order only
-_round           = 0      # current round number (for debug)
+_active_req_key  = None
 
 
 def _reset_game():
-    global _bot_target, _prev_pos, _prev_prev_pos, _prev_item_ids, _stuck_count
-    global _active_req_key, _round
-    _bot_target      = {}
-    _prev_pos        = {}
-    _prev_prev_pos   = {}
-    _prev_item_ids   = set()
-    _stuck_count     = {}
-    _active_req_key  = None
-    _round           = 0
+    global _bot_target, _prev_pos, _prev_prev_pos, _stuck_count, _prev_item_ids
+    global _active_req_key
+    _bot_target     = {}
+    _prev_pos       = {}
+    _prev_prev_pos  = {}
+    _stuck_count    = {}
+    _prev_item_ids  = set()
+    _active_req_key = None
 
 
 # ---------------------------------------------------------------------------
-# Assignment: called once per round, before deciding per-bot actions
+# Assignment engine
 # ---------------------------------------------------------------------------
 
-def assign_round(state, active, preview, wall_set, width, height, stuck_bots):
-    """
-    Returns bot_id -> {"item": item_dict, "nav": (x,y), "for_preview": bool}
-
-    Logic:
-      1. Classify bots: delivering (has active-order item) vs collecting (not delivering, inv<3).
-      2. Quota = what the active order still needs that isn't already held by any bot.
-      3. Carry forward valid stale assignments (item still on floor, type still in quota,
-         bot not delivering, bot not stuck).
-      4. Assign remaining collecting bots (not stuck) to unclaimed items, nearest first.
-      5. After active quota satisfied, spare non-stuck bots get preview items.
-
-    Key: stuck bots are EXCLUDED from assignments so they don't consume quota slots
-    while going nowhere.
-    """
+def assign_round(state, active, preview, wall_set, all_walls_set, width, height, stuck_bots):
     global _bot_target
 
     order_needed   = get_needed(active)  if active  else []
     preview_needed = get_needed(preview) if preview else []
 
-    # -- classify bots --
-    delivering_types = []
-    collecting_bots  = []   # not delivering, inv < 3, NOT stuck
-    for b in state["bots"]:
-        inv = b["inventory"]
-        if any(t in order_needed for t in inv):
-            delivering_types.extend(t for t in inv if t in order_needed)
-        elif len(inv) < 3 and b["id"] not in stuck_bots:
-            collecting_bots.append(b)
-        # stuck bots and full-non-useful bots: excluded from assignment
-
-    # -- quota: what still needs to be picked up from the floor --
-    # Subtract items held by ALL bots (quota = what's not yet picked up).
-    # Even stuck bots will eventually deliver, so their items count.
+    # Quota: how many of each type still need picking up from the floor.
+    # IMPORTANT: Exclude STUCK bots' inventories — stuck bots might never deliver,
+    # so counting their items as "covered" leaves quota fake-zero and idles spare bots.
     all_held = Counter()
     for b in state["bots"]:
+        if b["id"] in stuck_bots:
+            continue  # stuck bot's items don't count toward coverage
         for t in b["inventory"]:
             all_held[t] += 1
 
@@ -233,21 +196,33 @@ def assign_round(state, active, preview, wall_set, width, height, stuck_bots):
         if t in quota_ctr:
             quota_ctr[t] = max(0, quota_ctr[t] - cnt)
 
-    # -- items available on floor matching remaining quota --
-    avail = {}  # item_id -> item
+    # Items available on floor matching remaining quota
+    avail = {}
     for it in state["items"]:
         if quota_ctr.get(it["type"], 0) > 0:
-            nt = nav_target(it, wall_set, width, height)
+            nt = nav_target(it, all_walls_set, width, height)
             if nt is not None:
                 avail[it["id"]] = it
 
-    # -- carry forward valid stale assignments (non-stuck bots only) --
+    # Bots that can collect: not delivering, inv < 3, not stuck
+    collecting_bots = []
+    for b in state["bots"]:
+        inv = b["inventory"]
+        if any(t in order_needed for t in inv):
+            continue
+        if len(inv) >= 3:
+            continue
+        if b["id"] in stuck_bots:
+            continue
+        collecting_bots.append(b)
+
     assignments = {}
     claimed     = set()
 
+    # Carry forward valid stale assignments
     for bot_id, item_id in list(_bot_target.items()):
         if bot_id in stuck_bots:
-            continue  # don't honour stale assignments for stuck bots
+            continue
         if item_id not in avail:
             continue
         item = avail[item_id]
@@ -257,49 +232,44 @@ def assign_round(state, active, preview, wall_set, width, height, stuck_bots):
         if bot is None or len(bot["inventory"]) >= 3:
             continue
         if any(t in order_needed for t in bot["inventory"]):
-            continue  # bot switched to delivering
-        nt = nav_target(item, wall_set, width, height, tuple(bot["position"]))
+            continue
+        nt = nav_target(item, all_walls_set, width, height, tuple(bot["position"]))
         if nt is None:
             continue
         assignments[bot_id] = {"item": item, "nav": nt, "for_preview": False}
         claimed.add(item_id)
         quota_ctr[item["type"]] = max(0, quota_ctr[item["type"]] - 1)
 
-    # -- assign unassigned collecting bots --
+    # Assign unassigned bots greedily (nearest first)
     unassigned = [b for b in collecting_bots if b["id"] not in assignments]
-
     for bot in unassigned:
         if not any(v > 0 for v in quota_ctr.values()):
             break
         bp = tuple(bot["position"])
-        best_item = None
-        best_nav  = None
-        best_d    = float('inf')
-
+        best_item, best_nav, best_d = None, None, float('inf')
         for item_id, item in avail.items():
             if item_id in claimed:
                 continue
             if quota_ctr.get(item["type"], 0) <= 0:
                 continue
-            nt = nav_target(item, wall_set, width, height, bp)
+            nt = nav_target(item, all_walls_set, width, height, bp)
             if nt is None:
                 continue
             d = mdist(bp, nt)
             if d < best_d:
-                best_d    = d
-                best_item = item
-                best_nav  = nt
-
+                best_d, best_item, best_nav = d, item, nt
         if best_item is not None:
             assignments[bot["id"]] = {"item": best_item, "nav": best_nav, "for_preview": False}
             claimed.add(best_item["id"])
             quota_ctr[best_item["type"]] = max(0, quota_ctr[best_item["type"]] - 1)
 
-    # -- preview pre-fetch: spare non-stuck bots, only when active quota fully covered --
+    # Preview pre-fetch when active quota is fully covered
     if not any(v > 0 for v in quota_ctr.values()) and preview_needed:
         spare = [b for b in collecting_bots if b["id"] not in assignments]
         prev_ctr = Counter(preview_needed)
         for b in state["bots"]:
+            if b["id"] in stuck_bots:
+                continue  # exclude stuck bots from preview coverage too
             for t in b["inventory"]:
                 if t in prev_ctr:
                     prev_ctr[t] = max(0, prev_ctr[t] - 1)
@@ -310,33 +280,25 @@ def assign_round(state, active, preview, wall_set, width, height, stuck_bots):
             if not any(v > 0 for v in prev_ctr.values()):
                 break
             bp = tuple(bot["position"])
-            best_item = None
-            best_nav  = None
-            best_d    = float('inf')
-
+            best_item, best_nav, best_d = None, None, float('inf')
             for it in state["items"]:
                 if it["id"] in claimed:
                     continue
                 if prev_ctr.get(it["type"], 0) <= 0:
                     continue
-                nt = nav_target(it, wall_set, width, height, bp)
+                nt = nav_target(it, all_walls_set, width, height, bp)
                 if nt is None:
                     continue
                 d = mdist(bp, nt)
-                if d < best_d and d <= 20:
-                    best_d    = d
-                    best_item = it
-                    best_nav  = nt
-
+                if d < best_d and d <= 25:
+                    best_d, best_item, best_nav = d, it, nt
             if best_item is not None:
                 assignments[bot["id"]] = {"item": best_item, "nav": best_nav, "for_preview": True}
                 claimed.add(best_item["id"])
                 prev_ctr[best_item["type"]] = max(0, prev_ctr[best_item["type"]] - 1)
 
-    # -- persist for next round --
     _bot_target = {bid: a["item"]["id"] for bid, a in assignments.items()}
-
-    return assignments
+    return assignments, quota_ctr, len(avail)
 
 
 # ---------------------------------------------------------------------------
@@ -349,25 +311,27 @@ def decide(bot, state, ctx, path_cache):
     x, y   = pos
     inv    = bot["inventory"]
 
-    walls_base   = state["grid"]["walls"]
-    wall_set     = ctx["wall_set"]
-    width        = state["grid"]["width"]
-    height       = state["grid"]["height"]
-    zones        = ctx["zones"]
-    zone_set     = ctx["zone_set"]
-    order_needed = ctx["order_needed"]
-    stuck_bots   = ctx["stuck_bots"]
-    assignments  = ctx["assignments"]
-    items_by_id  = ctx["items_by_id"]
-    # Set of all other bot positions this round (for collision awareness)
-    other_pos    = ctx["other_pos"]
+    walls_base    = state["grid"]["walls"]
+    wall_set      = ctx["wall_set"]
+    item_walls    = ctx["item_walls"]      # frozenset of item positions (impassable)
+    all_walls_set = ctx["all_walls_set"]   # wall_set | item_walls
+    width         = state["grid"]["width"]
+    height        = state["grid"]["height"]
+    zones         = ctx["zones"]
+    zone_set      = ctx["zone_set"]
+    order_needed  = ctx["order_needed"]
+    stuck_bots    = ctx["stuck_bots"]
+    assignments   = ctx["assignments"]
+    items_by_id   = ctx["items_by_id"]
+    other_pos     = ctx["other_pos"]
 
     has_useful = any(t in order_needed for t in inv)
     drop_off   = nearest_zone(pos, zones)
 
-    # ---------------------------------------------------------------
+    # Full nav walls = real walls + items + other bots / reserved cells
+    full_nav_walls = walls_base + list(item_walls) + list(other_pos)
+
     # RULE 1 — At drop-off with useful items: deliver
-    # ---------------------------------------------------------------
     at_do = pos in zone_set
     if at_do and has_useful:
         return {"bot": bot_id, "action": "drop_off"}
@@ -377,59 +341,81 @@ def decide(bot, state, ctx, path_cache):
         for ddx, ddy, act in [(0, -1, "move_up"),  (1, 0, "move_right"),
                                (-1, 0, "move_left"), (0, 1, "move_down")]:
             npos = (x + ddx, y + ddy)
-            if npos not in wall_set and npos not in other_pos:
+            if npos not in wall_set and npos not in item_walls and npos not in other_pos:
                 return {"bot": bot_id, "action": act}
-        # All neighbors occupied — just wait
         return {"bot": bot_id, "action": "wait"}
 
-    # ---------------------------------------------------------------
-    # RULE 2 — Deliver: has useful items, head to nearest drop-off
-    # Use bot-aware walls so A* routes around other bots when blocked.
-    # ---------------------------------------------------------------
+    # RULE 2 — Stuck escape (only non-delivering bots).
+    # Delivering bots (has_useful) skip this — random escape moves them AWAY from
+    # the drop-off and makes things worse in congested corridors. They press forward
+    # via RULE 3 which uses fresh A* every round.
+    if bot_id in stuck_bots and not has_useful:
+        path_cache.invalidate(bot_id)
+        # Primary: navigate toward nearest open corridor row to escape narrow aisles.
+        open_rows = ctx.get("open_rows", [])
+        if open_rows and y not in open_rows:
+            nearest_open = min(open_rows, key=lambda r: abs(r - y))
+            act = path_cache.move_toward(bot_id, pos, (x, nearest_open),
+                                         walls_base + list(item_walls), width, height)
+            if act:
+                return {"bot": bot_id, "action": act}
+        # Fallback: deterministic direction rotation (avoids repeating the same blocked move)
+        dirs = [(0, -1, "move_up"), (0, 1, "move_down"),
+                (-1, 0, "move_left"), (1, 0, "move_right")]
+        count = _stuck_count.get(bot_id, 3)
+        dirs = dirs[count % 4:] + dirs[:count % 4]
+        for dx, dy, act in dirs:
+            npos = (x + dx, y + dy)
+            if (0 <= npos[0] < width and 0 <= npos[1] < height
+                    and npos not in wall_set and npos not in item_walls
+                    and npos not in other_pos):
+                return {"bot": bot_id, "action": act}
+        for dx, dy, act in dirs:
+            npos = (x + dx, y + dy)
+            if (0 <= npos[0] < width and 0 <= npos[1] < height
+                    and npos not in wall_set and npos not in item_walls):
+                return {"bot": bot_id, "action": act}
+        return {"bot": bot_id, "action": "wait"}
+
+    # RULE 3 — Deliver: has useful items, head to nearest drop-off.
+    # Always recompute A* fresh — cached paths lock in suboptimal routes from when
+    # other bots were temporarily blocking the optimal corridor. Those bots have
+    # since moved, but the stale path persists. Fresh A* (item_walls only, no other
+    # bots) finds the globally optimal route; reservation system handles conflicts.
     if has_useful:
-        bot_walls = walls_base + list(other_pos)
-        act = path_cache.move_toward(bot_id, pos, drop_off, bot_walls, width, height)
-        if not act:
-            act = path_cache.move_toward(bot_id, pos, drop_off, walls_base, width, height)
+        path_cache.invalidate(bot_id)
+        act = path_cache.move_toward(bot_id, pos, drop_off,
+                                     walls_base + list(item_walls), width, height)
         if not act:
             for z in zones:
                 if z != drop_off:
-                    act = path_cache.move_toward(bot_id, pos, z, walls_base, width, height)
+                    act = path_cache.move_toward(bot_id, pos, z,
+                                                 walls_base + list(item_walls), width, height)
                     if act:
                         break
         if act:
             return {"bot": bot_id, "action": act}
-        return _rand(bot_id, pos, wall_set, width, height)
+        return _rand(bot_id, pos, wall_set, item_walls, width, height)
 
-    # ---------------------------------------------------------------
-    # RULE 3 — Unstick: bot oscillating or stationary
-    # Try all 4 directions, prefer cells not occupied by other stuck bots.
-    # ---------------------------------------------------------------
-    if bot_id in stuck_bots:
-        path_cache.invalidate(bot_id)
-        dirs = [(0, -1, "move_up"), (0, 1, "move_down"),
-                (-1, 0, "move_left"), (1, 0, "move_right")]
-        random.shuffle(dirs)
-        # First pass: avoid walls AND other stuck bots
-        stuck_pos = {(b["position"][0], b["position"][1])
-                     for b in state["bots"]
-                     if b["id"] != bot_id and b["id"] in stuck_bots}
-        for dx, dy, act in dirs:
-            npos = (x + dx, y + dy)
-            if (0 <= npos[0] < width and 0 <= npos[1] < height
-                    and npos not in wall_set and npos not in stuck_pos):
-                return {"bot": bot_id, "action": act}
-        # Second pass: any non-wall move (even into other bots — server resolves conflicts)
-        for dx, dy, act in dirs:
-            npos = (x + dx, y + dy)
-            if (0 <= npos[0] < width and 0 <= npos[1] < height
-                    and npos not in wall_set):
-                return {"bot": bot_id, "action": act}
-        return {"bot": bot_id, "action": "wait"}
+    # RULE 3.5 — Pre-deliver: when active quota is fully covered and this bot holds
+    # preview-order items, drift toward the nearest drop-off so it can deliver the
+    # instant the order changes.  Only fire when within 15 steps (no cross-map rush)
+    # and stop when already within 4 steps (avoids crowding the delivery zone).
+    if not has_useful and inv:
+        quota_ctr = ctx.get("quota_ctr", {})
+        if not any(v > 0 for v in quota_ctr.values()):
+            preview_obj = next((o for o in state["orders"] if o["status"] == "preview"), None)
+            if preview_obj:
+                preview_needed = get_needed(preview_obj)
+                if any(t in preview_needed for t in inv):
+                    dist_to_do = mdist(pos, drop_off)
+                    if 4 < dist_to_do <= 15:
+                        act = path_cache.move_toward(bot_id, pos, drop_off,
+                                                     walls_base + list(item_walls), width, height)
+                        if act:
+                            return {"bot": bot_id, "action": act}
 
-    # ---------------------------------------------------------------
     # RULE 4 — Collect: follow assignment
-    # ---------------------------------------------------------------
     if bot_id in assignments and len(inv) < 3:
         asgn = assignments[bot_id]
         item = asgn["item"]
@@ -438,38 +424,64 @@ def decide(bot, state, ctx, path_cache):
         if item["id"] in items_by_id:
             ip = (items_by_id[item["id"]]["position"][0],
                   items_by_id[item["id"]]["position"][1])
-            # Pick up if adjacent
-            if mdist(ip, pos) <= 1:
+            # Pick up when adjacent (items are impassable, so bot is always at mdist>=1)
+            if mdist(ip, pos) == 1:
                 return {"bot": bot_id, "action": "pick_up", "item_id": item["id"]}
-            # Navigate: exclude target item from nav walls, add other bots+reserved as obstacles
-            nav_walls = walls_base + [it["position"] for it in state["items"]
-                                       if it["id"] != item["id"]] + list(other_pos)
-            act = path_cache.move_toward(bot_id, pos, nav, nav_walls, width, height)
+            # Navigate to the adjacent-floor nav target
+            act = path_cache.move_toward(bot_id, pos, nav, full_nav_walls, width, height)
             if not act:
-                # Can't route around other bots — try ignoring items only (keep bot reservations)
-                nav_walls2 = walls_base + list(other_pos)
-                act = path_cache.move_toward(bot_id, pos, nav, nav_walls2, width, height)
+                act = path_cache.move_toward(bot_id, pos, nav,
+                                             walls_base + list(item_walls), width, height)
             if act:
                 return {"bot": bot_id, "action": act}
         else:
-            # Item picked up by someone else — drop stale assignment
             _bot_target.pop(bot_id, None)
 
-    # ---------------------------------------------------------------
-    # RULE 5 — Idle: just wait in place.
-    # Forcing idle bots to navigate to spread positions causes massive congestion
-    # when 20 bots start at the same cell. Bots naturally disperse via assignments.
+    # RULE 5 — Idle: 5-sector distribution so idle bots spread evenly across the map.
+    # bot_id % 5 maps 10 bots into 5 sectors (2 bots each), reducing per-corridor
+    # congestion compared to a 2-half split where 5 bots flood one side.
+    if len(inv) < 3:
+        num_sectors  = 5
+        sector_idx   = bot_id % num_sectors
+        sector_size  = max((width - 2) // num_sectors, 1)
+        sector_start = 1 + sector_idx * sector_size
+        sector_end   = sector_start + sector_size
+
+        best_nav     = None
+        best_d       = float('inf')
+        fallback_nav = None
+        fallback_d   = float('inf')
+
+        for it in state["items"]:
+            nt = nav_target(it, all_walls_set, width, height, pos)
+            if nt is None:
+                continue
+            d = mdist(pos, nt)
+            if sector_start <= it["position"][0] < sector_end:
+                if d < best_d:
+                    best_d, best_nav = d, nt
+            else:
+                if d < fallback_d:
+                    fallback_d, fallback_nav = d, nt
+
+        target = best_nav if best_nav is not None else fallback_nav
+        if target is not None and mdist(pos, target) > 0:
+            act = path_cache.move_toward(bot_id, pos, target,
+                                         walls_base + list(item_walls), width, height)
+            if act:
+                return {"bot": bot_id, "action": act}
     return {"bot": bot_id, "action": "wait"}
 
 
-def _rand(bot_id, pos, wall_set, width, height):
+def _rand(bot_id, pos, wall_set, item_walls, width, height):
     x, y = pos
     dirs = [(0, -1, "move_up"), (0, 1, "move_down"),
             (-1, 0, "move_left"), (1, 0, "move_right")]
     random.shuffle(dirs)
     for dx, dy, act in dirs:
         nx, ny = x + dx, y + dy
-        if 0 <= nx < width and 0 <= ny < height and (nx, ny) not in wall_set:
+        if (0 <= nx < width and 0 <= ny < height
+                and (nx, ny) not in wall_set and (nx, ny) not in item_walls):
             return {"bot": bot_id, "action": act}
     return {"bot": bot_id, "action": "wait"}
 
@@ -478,7 +490,7 @@ def _rand(bot_id, pos, wall_set, width, height):
 # Visualization
 # ---------------------------------------------------------------------------
 
-def visualize(state, assignments, stuck_bots, order_needed, zones):
+def visualize(state, assignments, stuck_bots, order_needed, zones, quota_ctr=None, avail_count=0):
     w = state["grid"]["width"]
     h = state["grid"]["height"]
     grid = [["." for _ in range(w)] for _ in range(h)]
@@ -503,13 +515,21 @@ def visualize(state, assignments, stuck_bots, order_needed, zones):
     if preview:
         print(f"Preview: {get_needed(preview)}")
 
-    n_del  = sum(1 for b in state["bots"]
-                 if any(t in order_needed for t in b["inventory"]))
+    n_del  = sum(1 for b in state["bots"] if any(t in order_needed for t in b["inventory"]))
     n_act  = sum(1 for a in assignments.values() if not a["for_preview"])
     n_prev = sum(1 for a in assignments.values() if a["for_preview"])
     n_idle = len(state["bots"]) - n_del - len(assignments)
     print(f"Delivering={n_del} Collecting={n_act} PreFetch={n_prev} "
           f"Idle={max(0,n_idle)} Stuck={len(stuck_bots)}")
+    # Show each bot's inventory for debugging
+    for b in state["bots"]:
+        inv = b["inventory"]
+        stuck = "STUCK" if b["id"] in stuck_bots else ""
+        if inv or stuck:
+            print(f"  Bot {b['id']} @ {b['position']} inv={inv} {stuck}")
+    if quota_ctr is not None:
+        remaining = {k: v for k, v in quota_ctr.items() if v > 0}
+        print(f"  Quota remaining: {remaining}  Available on floor: {avail_count}")
 
 
 # ---------------------------------------------------------------------------
@@ -517,8 +537,8 @@ def visualize(state, assignments, stuck_bots, order_needed, zones):
 # ---------------------------------------------------------------------------
 
 async def play():
-    global _bot_target, _prev_pos, _prev_prev_pos, _prev_item_ids, _stuck_count
-    global _active_req_key, _round
+    global _bot_target, _prev_pos, _prev_prev_pos, _stuck_count
+    global _prev_item_ids, _active_req_key
 
     async with websockets.connect(WS_URL) as ws:
         path_cache = PathCache()
@@ -532,7 +552,6 @@ async def play():
                 break
 
             state  = msg
-            _round = state.get("round", _round + 1)
             width  = state["grid"]["width"]
             height = state["grid"]["height"]
             walls_base = state["grid"]["walls"]
@@ -540,113 +559,98 @@ async def play():
             zones      = all_zones(state)
             zone_set   = set(zones)
 
+            # Items are impassable — add them to the wall set for all A* calls
+            item_walls  = frozenset(tuple(it["position"]) for it in state["items"])
+            all_walls_set = wall_set | item_walls
+
             active  = next((o for o in state["orders"] if o["status"] == "active"), None)
             preview = next((o for o in state["orders"] if o["status"] == "preview"), None)
             order_needed = get_needed(active) if active else []
 
-            # ----------------------------------------------------------
-            # Cache invalidation: only invalidate bots whose assigned target
-            # item has disappeared from the floor (picked up by someone).
-            # Do NOT clear all paths — that wastes work on every pickup.
-            # ----------------------------------------------------------
+            # Invalidate cached paths for bots whose target item disappeared
             cur_item_ids = {it["id"] for it in state["items"]}
             gone_ids = _prev_item_ids - cur_item_ids
-            if gone_ids:
-                # Invalidate only bots that were heading toward a now-gone item
-                for bid, iid in list(_bot_target.items()):
-                    if iid in gone_ids:
-                        path_cache.invalidate(bid)
+            for bid, iid in list(_bot_target.items()):
+                if iid in gone_ids:
+                    path_cache.invalidate(bid)
             _prev_item_ids = cur_item_ids
 
-            # ----------------------------------------------------------
-            # Reset assignments ONLY when the active order's required list
-            # changes (new order), NOT when items_delivered grows.
-            # items_delivered grows every delivery but items_required stays
-            # the same until the order completes and a new one starts.
-            # ----------------------------------------------------------
+            # Reset assignments only on a NEW order
             req_key = tuple(sorted(active["items_required"])) if active else ()
             if req_key != _active_req_key:
                 _bot_target.clear()
                 path_cache.clear()
                 _active_req_key = req_key
 
-            # ----------------------------------------------------------
-            # Stuck detection
-            # ----------------------------------------------------------
-            # Stuck detection: bot must be stationary for 4+ consecutive rounds
-            # (avoids false positives when bots are legitimately waiting 1-2 rounds)
+            # Stuck detection: stationary 3+ rounds OR A→B→A oscillation
             stuck_bots = set()
             for b in state["bots"]:
-                bid = b["id"]
+                bid  = b["id"]
                 cur  = (b["position"][0], b["position"][1])
                 prev = _prev_pos.get(bid)
+                pp   = _prev_prev_pos.get(bid)
                 if prev == cur:
                     _stuck_count[bid] = _stuck_count.get(bid, 0) + 1
+                elif pp == cur and prev != cur:
+                    # A→B→A oscillation — flag immediately
+                    _stuck_count[bid] = max(_stuck_count.get(bid, 0), 3)
                 else:
                     _stuck_count[bid] = 0
                 if _stuck_count.get(bid, 0) >= 3:
                     stuck_bots.add(bid)
             _prev_prev_pos = dict(_prev_pos)
-            _prev_pos = {b["id"]: (b["position"][0], b["position"][1])
-                         for b in state["bots"]}
+            _prev_pos = {b["id"]: (b["position"][0], b["position"][1]) for b in state["bots"]}
 
-            # ----------------------------------------------------------
-            # Build assignments for this round (pass stuck_bots so stuck
-            # bots are excluded from consuming quota slots)
-            # ----------------------------------------------------------
-            assignments = assign_round(
-                state, active, preview, wall_set, width, height, stuck_bots
+            assignments, quota_ctr, avail_count = assign_round(
+                state, active, preview, wall_set, all_walls_set, width, height, stuck_bots
             )
 
             items_by_id = {it["id"]: it for it in state["items"]}
-
-            # All bot positions (used for collision-aware idling and unstick)
             all_bot_pos = {(b["position"][0], b["position"][1]) for b in state["bots"]}
 
+            # Open rows: rows with no interior walls (horizontal corridors).
+            # Stuck bots navigate to these to escape narrow aisles.
+            open_rows = [r for r in range(height)
+                         if not any((wx, r) in wall_set for wx in range(1, width - 1))]
+
             ctx = {
-                "order_needed": order_needed,
-                "wall_set":     wall_set,
-                "zones":        zones,
-                "zone_set":     zone_set,
-                "assignments":  assignments,
-                "items_by_id":  items_by_id,
-                "stuck_bots":   stuck_bots,
-                "other_pos":    all_bot_pos,  # filled per-bot below
+                "order_needed":  order_needed,
+                "wall_set":      wall_set,
+                "item_walls":    item_walls,
+                "all_walls_set": all_walls_set,
+                "zones":         zones,
+                "zone_set":      zone_set,
+                "assignments":   assignments,
+                "items_by_id":   items_by_id,
+                "stuck_bots":    stuck_bots,
+                "other_pos":     all_bot_pos,
+                "open_rows":     open_rows,
+                "quota_ctr":     quota_ctr,
             }
 
-            # Delivering bots act first (so they don't get blocked)
             def priority(bot):
                 return 1 if any(t in order_needed for t in bot["inventory"]) else 0
 
-            bot_actions = {}
-            # reserved: cells claimed by already-decided bots this round.
-            # Bots avoid moving into reserved cells to prevent conflicts.
+            bot_actions    = {}
             reserved_cells = set()
-
-            ACTION_DELTAS = {
-                "move_up":    (0, -1),
-                "move_down":  (0, 1),
-                "move_left":  (-1, 0),
-                "move_right": (1, 0),
+            ACTION_DELTAS  = {
+                "move_up": (0, -1), "move_down": (0, 1),
+                "move_left": (-1, 0), "move_right": (1, 0),
             }
 
             for bot in sorted(state["bots"], key=lambda b: -priority(b)):
                 bpos = (bot["position"][0], bot["position"][1])
-                # other_pos = current bot positions + reserved cells (cells other bots plan to enter)
-                ctx["other_pos"] = ({p for p in all_bot_pos if p != bpos} | reserved_cells)
+                ctx["other_pos"] = {p for p in all_bot_pos if p != bpos} | reserved_cells
                 action = decide(bot, state, ctx, path_cache)
                 bot_actions[bot["id"]] = action
-                # Reserve the target cell so subsequent bots don't conflict
                 act_name = action.get("action", "wait")
                 if act_name in ACTION_DELTAS:
                     dx, dy = ACTION_DELTAS[act_name]
-                    target_cell = (bpos[0] + dx, bpos[1] + dy)
-                    reserved_cells.add(target_cell)
+                    reserved_cells.add((bpos[0] + dx, bpos[1] + dy))
 
-            visualize(state, assignments, stuck_bots, order_needed, zones)
+            visualize(state, assignments, stuck_bots, order_needed, zones, quota_ctr, avail_count)
 
-            actions = [bot_actions[b["id"]]
-                       for b in sorted(state["bots"], key=lambda b: b["id"])]
+            actions = [bot_actions[b["id"]] for b in sorted(state["bots"], key=lambda b: b["id"])]
             await ws.send(json.dumps({"actions": actions}))
 
 

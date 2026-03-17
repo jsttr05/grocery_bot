@@ -16,7 +16,7 @@ The bot connects immediately via WebSocket and plays until `game_over` is receiv
 
 ## Files
 
-- `bot.py` — Main bot (active development). Uses `"submit"` as the delivery action.
+- `attempting_nightmare_experiment.py` — Main bot (active development). Uses `"drop_off"` as the delivery action.
 - `starter_file.py` — Original scaffold provided by organizers. Uses `"drop_off"` as the delivery action. Keep as reference.
 
 ## Game State Structure
@@ -43,14 +43,14 @@ Each turn, send: `{"actions": [{"bot": bot_id, "action": ACTION, ...}, ...]}`
 |--------|------------|
 | `move_up/down/left/right` | — |
 | `pick_up` | `"item_id": id` |
-| `submit` | — (deliver inventory at drop-off) |
+| `drop_off` | — (deliver inventory at drop-off) |
 | `wait` | — |
 
 ## Architecture
 
 The `decide(bot, state)` function is the core decision loop — it runs once per bot per round and returns a single action dict. Logic priority in `bot.py`:
 
-1. If at drop-off with inventory → submit
+1. If at drop-off with inventory → drop off
 2. If inventory has active-order items or is ≥3 full → head to drop-off
 3. If adjacent to a wanted item → pick it up
 4. Move toward the nearest needed item (A* pathfinding)
@@ -63,3 +63,20 @@ Preview-order pre-fetching: if inventory space allows, the bot also picks up ite
 ## Environment
 
 Uses conda (configured in `.vscode/settings.json`). Required packages: `websockets`.
+
+## MCP Documentation Server
+
+A challenge documentation MCP server is configured for this project:
+
+```bash
+claude mcp add --transport http grocery-bot https://mcp-docs.ainm.no/mcp
+```
+
+Available resources (use `ReadMcpResourceTool` with server `grocery-bot`):
+- `challenge://overview` — Challenge overview and getting started
+- `challenge://grocery-bot` — Game mechanics and rules
+- `challenge://endpoint-spec` — API endpoint specification
+- `challenge://scoring` — Scoring formula and strategy tips
+- `challenge://submission-guide` — How to submit and iterate
+
+Use `mcp__grocery-bot__search_docs` to search documentation by keyword.
